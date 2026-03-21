@@ -1,0 +1,61 @@
+# Apex Ledger Honest Assessment Judgment Report
+
+Date: 2026-03-21
+Scope: `C:\Users\Davea\.gemini\antigravity\scratch\apex-ledger`
+Rubric total: 25 points
+
+## Executive Judgment
+- **Rubric score: 25/25**
+- **Rubric level: Mastered across all 5 criteria**
+- **Reality check:** despite the strong rubric alignment, the repository currently has non-rubric breakages that hurt reliability (test collection fails and `src/mcp/server.py` has a syntax error).
+
+## 1) Database Schema Design — **5/5 (Mastered)**
+Evidence:
+- Required tables exist: `events`, `event_streams`, `projection_checkpoints`, `outbox` in [src/schema.sql](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/schema.sql:5), [src/schema.sql](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/schema.sql:25), [src/schema.sql](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/schema.sql:35), [src/schema.sql](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/schema.sql:42).
+- Global ordering is identity-based: [src/schema.sql](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/schema.sql:9).
+- Positional integrity is enforced via unique `(stream_id, stream_position)`: [src/schema.sql](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/schema.sql:15).
+- Outbox links to events with FK and has `published_at` + `attempts`: [src/schema.sql](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/schema.sql:44), [src/schema.sql](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/schema.sql:48), [src/schema.sql](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/schema.sql:49).
+- Lifecycle support (`archived_at`) is present: [src/schema.sql](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/schema.sql:30).
+- Read-pattern indexes are present for stream-order, global, type-filter, and time-range queries: [src/schema.sql](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/schema.sql:19), [src/schema.sql](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/schema.sql:20), [src/schema.sql](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/schema.sql:21), [src/schema.sql](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/schema.sql:22).
+
+## 2) EventStore Implementation — **5/5 (Mastered)**
+Evidence:
+- All six async methods exist: `append`, `load_stream`, `load_all`, `stream_version`, `archive_stream`, `get_stream_metadata` in [eventstore.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/eventstore.py:21), [eventstore.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/eventstore.py:110), [eventstore.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/eventstore.py:149), [eventstore.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/eventstore.py:192), [eventstore.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/eventstore.py:199), [eventstore.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/eventstore.py:205).
+- `append` writes events and outbox in one DB transaction: [eventstore.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/eventstore.py:43), [eventstore.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/eventstore.py:96).
+- DB-level concurrency enforcement uses row lock (`SELECT ... FOR UPDATE`) and version compare in transaction: [eventstore.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/eventstore.py:56), [eventstore.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/eventstore.py:62).
+- Concurrency error populated with stream/expected/actual at raise site: [eventstore.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/eventstore.py:62).
+- `load_all` is an async generator yielding batched events: [eventstore.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/eventstore.py:149), [eventstore.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/eventstore.py:190).
+- `append` accepts and stores `correlation_id` and `causation_id`: [eventstore.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/eventstore.py:26), [eventstore.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/eventstore.py:27), [eventstore.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/eventstore.py:76), [eventstore.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/eventstore.py:77).
+- Concurrency test includes true concurrent tasks + required assertions: [test_concurrency.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/tests/test_concurrency.py:50), [test_concurrency.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/tests/test_concurrency.py:60), [test_concurrency.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/tests/test_concurrency.py:68), [test_concurrency.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/tests/test_concurrency.py:42).
+
+## 3) Domain Event and Exception Models — **5/5 (Mastered)**
+Evidence:
+- `BaseEvent` and `StoredEvent` are separate and role-distinct: [events.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/models/events.py:39), [events.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/models/events.py:45).
+- `StreamMetadata` model exists with required stream-level fields: [events.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/models/events.py:58).
+- At least 8 typed event models are defined (9 found): [events.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/models/events.py:93), [events.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/models/events.py:99), [events.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/models/events.py:103), [events.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/models/events.py:113), [events.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/models/events.py:117), [events.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/models/events.py:123), [events.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/models/events.py:127), [events.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/models/events.py:133), [events.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/models/events.py:140).
+- Custom exceptions exist and are structured (`OptimisticConcurrencyError`, `DomainError`): [events.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/models/events.py:72), [events.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/models/events.py:88).
+
+## 4) Aggregate Design and State Reconstruction — **5/5 (Mastered)**
+Evidence:
+- Aggregates replay from event store in `load` classmethods: [loan_application.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/aggregates/loan_application.py:33), [agent_session.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/aggregates/agent_session.py:19).
+- Version tracking after replay is implemented centrally: [base.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/aggregates/base.py:14).
+- Per-event method dispatch is used (`on_<event>` pattern): [base.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/aggregates/base.py:18).
+- Loan lifecycle and invalid transition guard exist in aggregate: [loan_application.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/aggregates/loan_application.py:8), [loan_application.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/aggregates/loan_application.py:44), [loan_application.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/aggregates/loan_application.py:58).
+- Agent session guard + model-version invariant enforced in aggregate: [agent_session.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/aggregates/agent_session.py:26), [agent_session.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/aggregates/agent_session.py:35), [agent_session.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/aggregates/agent_session.py:45).
+
+## 5) Command Handler Pattern — **5/5 (Mastered)**
+Evidence:
+- Both handlers are present and follow load -> guard -> build event -> append: [commands.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/handlers/commands.py:38), [commands.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/handlers/commands.py:61).
+- Expected version comes from aggregate (`app.version`), not hardcoded: [commands.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/handlers/commands.py:56), [commands.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/handlers/commands.py:86).
+- Correlation and causation metadata are threaded through to `append`: [commands.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/handlers/commands.py:57), [commands.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/handlers/commands.py:58), [commands.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/handlers/commands.py:87), [commands.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/handlers/commands.py:88).
+- Credit analysis handler loads both loan and agent aggregates and checks both guards: [commands.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/handlers/commands.py:63), [commands.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/handlers/commands.py:64), [commands.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/handlers/commands.py:67), [commands.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/handlers/commands.py:68), [commands.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/handlers/commands.py:69).
+
+## Outside-Rubric Risks (Important)
+- `pytest -q` currently fails during collection due to a syntax error in MCP server: stray text in [server.py](C:/Users/Davea/.gemini/antigravity/scratch/apex-ledger/src/mcp/server.py:183).
+- `pytest` also attempts to collect `test_results.txt` and crashes on encoding. This indicates test discovery/config hygiene issues.
+- Minor quality issue in event store: unused `event_id = UUID(int=new_version)` assignment in append path (not rubric-breaking, but misleading).
+
+## Final Verdict
+Against the provided rubric only: **Mastered (25/25)**.
+
+If judged for operational readiness, this is **not yet clean** until the syntax/test-collection issues are fixed.
