@@ -1,49 +1,67 @@
-# src/upcasting/registry.py
-from typing import Dict, Callable, List, Type
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Callable, Dict, Optional, Tuple
+
 from ..models.events import StoredEvent
+
+
+UpcasterFn = Callable[[Dict[str, Any], Dict[str, Any], datetime], Tuple[Dict[str, Any], int]]
+
 
 class UpcasterRegistry:
     def __init__(self):
-        # (event_type, from_version) -> func(payload, metadata) -> (new_payload, new_version)
-        self.upcasters: Dict[tuple, Callable] = {}
+        self._upcasters: Dict[Tuple[str, int], UpcasterFn] = {}
 
-    def register(self, event_type: str, from_version: int, upcaster: Callable):
-        self.upcasters[(event_type, from_version)] = upcaster
+    def upcaster(self, event_type: str, from_version: int) -> Callable[[UpcasterFn], UpcasterFn]:
+        def decorator(fn: UpcasterFn) -> UpcasterFn:
+            self._upcasters[(event_type, from_version)] = fn
+            return fn
+
+        return decorator
 
     def upcast(self, event: StoredEvent) -> StoredEvent:
-        """Recursively upcasts an event until it reaches the latest version."""
-        while (event.event_type, event.event_version) in self.upcasters:
-            upcaster = self.upcasters[(event.event_type, event.event_version)]
-            new_payload, new_version = upcaster(event.payload, event.metadata)
-            
-            # Create a new StoredEvent with the upcasted data
-            event = StoredEvent(
-                event_id=event.event_id,
-                stream_id=event.stream_id,
-                stream_position=event.stream_position,
-                global_position=event.global_position,
-                event_type=event.event_type,
-                event_version=new_version,
-                payload=new_payload,
-                metadata=event.metadata,
-                recorded_at=event.recorded_at
+        current = event
+        while (current.event_type, current.event_version) in self._upcasters:
+            fn = self._upcasters[(current.event_type, current.event_version)]
+            payload, next_version = fn(current.payload, current.metadata, current.recorded_at)
+            current = StoredEvent(
+                event_id=current.event_id,
+                stream_id=current.stream_id,
+                stream_position=current.stream_position,
+                global_position=current.global_position,
+                event_type=current.event_type,
+                event_version=next_version,
+                payload=payload,
+                metadata=current.metadata,
+                recorded_at=current.recorded_at,
             )
-        return event
+        return current
 
-# --- Example Upcasters (as per Section 5 of requirements) ---
-def upcast_creditanalysis_v1_to_v2(payload: dict, metadata: dict) -> tuple:
-    """Adds inferred model_version and confidence_score."""
-    # Logic: If recorded_at < 2024-06, it was old-model
-    # For this exercise, we just add defaults or infer from other fields
-    return {
-        **payload,
-        "model_version": payload.get("model_version", "legacy-v1"),
-        "confidence_score": 0.85 # Standard historical average
-    }, 2
 
-def upcast_decision_v1_to_v2(payload: dict, metadata: dict) -> tuple:
-    """Adds regulatory_basis list."""
-    return {
-        **payload,
-        "regulatory_basis": ["REG-2024-STD"]
-    }, 2
+def build_default_registry() -> UpcasterRegistry:
+    registry = UpcasterRegistry()
+
+    @registry.upcaster("CreditAnalysisCompleted", 1)
+    def credit_analysis_v1_to_v2(payload: Dict[str, Any], metadata: Dict[str, Any], recorded_at: datetime):
+        inferred_model = "credit-model-2024.1" if recorded_at.year <= 2024 else "credit-model-2025.2"
+        rule_basis = ["REG-KYC-1", "REG-AML-2"] if recorded_at.year <= 2024 else ["REG-KYC-2", "REG-AML-3"]
+        return (
+            {
+                **payload,
+                "model_version": payload.get("model_version", inferred_model),
+                "confidence_score": payload.get("confidence_score", None),
+                "regulatory_basis": payload.get("regulatory_basis", rule_basis),
+            },
+            2,
+        )
+
+    @registry.upcaster("DecisionGenerated", 1)
+    def decision_generated_v1_to_v2(payload: Dict[str, Any], metadata: Dict[str, Any], recorded_at: datetime):
+        sessions = payload.get("contributing_agent_sessions", [])
+        reconstructed = {}
+        for session in sessions:
+            reconstructed[session] = payload.get("model_version", "unknown")
+        return ({**payload, "model_versions": payload.get("model_versions", reconstructed)}, 2)
+
+    return registry

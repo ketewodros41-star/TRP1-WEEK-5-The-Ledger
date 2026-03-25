@@ -1,7 +1,10 @@
-# src/aggregates/agent_session.py
-from typing import Optional, List, Dict, Any
+from __future__ import annotations
+
+from typing import List, Optional
+
 from .base import BaseAggregate
-from ..models.events import StoredEvent, DomainError
+from ..models.events import DomainError, StoredEvent
+
 
 class AgentSessionAggregate(BaseAggregate):
     def __init__(self, agent_id: str, session_id: str):
@@ -9,58 +12,50 @@ class AgentSessionAggregate(BaseAggregate):
         self.agent_id = agent_id
         self.session_id = session_id
         self.model_version: Optional[str] = None
-        self.is_started: bool = False
-        self.is_completed: bool = False
-        self.last_node: Optional[str] = None
-        self.node_history: List[str] = []
-        self.output_events: List[Dict[str, Any]] = []
+        self.started = False
+        self.context_loaded = False
+        self.completed = False
+        self.failed = False
+        self.pending_decisions: List[str] = []
 
     @classmethod
     async def load(cls, store, agent_id: str, session_id: str) -> "AgentSessionAggregate":
-        events = await store.load_stream(f"agent-{agent_id}-{session_id}")
         agg = cls(agent_id, session_id)
+        events = await store.load_stream(agg.stream_id)
         agg.apply_events(events)
         return agg
 
-    # --- Business Rules ---
-    def assert_started(self):
-        """Gas Town: Enforces that a session must be started before any other work."""
-        if not self.is_started:
-            raise DomainError(f"Agent session {self.session_id} not started. Gas Town pattern violation.")
+    def assert_started(self) -> None:
+        if not self.started:
+            raise DomainError("Agent session must be started before use")
 
-    def assert_not_completed(self):
-        if self.is_completed:
-            raise DomainError(f"Agent session {self.session_id} already completed.")
+    def assert_context_loaded_before_decision(self) -> None:
+        if not self.context_loaded:
+            raise DomainError("AgentSession must load context before decision events")
 
-    def assert_model_version(self, version: str):
-        if self.model_version and self.model_version != version:
-            raise DomainError(f"Model version mismatch. Session locked to {self.model_version}, but got {version}.")
+    def assert_model_version_locked(self, requested_model_version: str) -> None:
+        if self.model_version and self.model_version != requested_model_version:
+            raise DomainError(
+                f"Model version lock mismatch: expected {self.model_version}, got {requested_model_version}"
+            )
 
-    # --- Event Handlers ---
-    def on_agentsessionstarted(self, event: StoredEvent):
-        if self.is_started:
-            # This might happen on retry/replay, which is fine
-            pass
-        self.is_started = True
-        self.model_version = event.payload.get("model_version")
+    def on_agentsessionstarted(self, event: StoredEvent) -> None:
+        self.started = True
+        self.model_version = event.payload["model_version"]
 
-    def on_agentnodeexecuted(self, event: StoredEvent):
-        # No guard here (replay safety)
-        node_name = event.payload.get("node_name")
-        self.last_node = node_name
-        self.node_history.append(node_name)
+    def on_agentcontextloaded(self, event: StoredEvent) -> None:
+        self.context_loaded = True
 
-    def on_agentoutputwritten(self, event: StoredEvent):
-        # No guard here (replay safety)
-        self.output_events.extend(event.payload.get("events_written", []))
+    def on_agentdecisionpending(self, event: StoredEvent) -> None:
+        self.pending_decisions.append(event.payload["decision_id"])
 
-    def on_agentsessioncompleted(self, event: StoredEvent):
-        self.is_completed = True
+    def on_agentdecisioncompleted(self, event: StoredEvent) -> None:
+        decision_id = event.payload["decision_id"]
+        if decision_id in self.pending_decisions:
+            self.pending_decisions.remove(decision_id)
 
-    def on_agentsessionfailed(self, event: StoredEvent):
-        # We don't mark as completed, but we might record failure
-        pass
+    def on_agentsessioncompleted(self, event: StoredEvent) -> None:
+        self.completed = True
 
-    def on_agentsessionrecovered(self, event: StoredEvent):
-        # Recovery fact
-        pass
+    def on_agentsessionfailed(self, event: StoredEvent) -> None:
+        self.failed = True

@@ -1,58 +1,47 @@
-# src/aggregates/compliance_record.py
+from __future__ import annotations
+
 from enum import Enum
-from typing import List, Optional, Dict, Any
+from typing import Dict, Optional
+
 from .base import BaseAggregate
-from ..models.events import StoredEvent, DomainError
+from ..models.events import DomainError, StoredEvent
+
 
 class ComplianceVerdict(str, Enum):
     CLEAR = "CLEAR"
     BLOCKED = "BLOCKED"
     CONDITIONAL = "CONDITIONAL"
 
+
 class ComplianceRecordAggregate(BaseAggregate):
     def __init__(self, application_id: str):
         super().__init__(f"compliance-{application_id}")
         self.application_id = application_id
+        self.rules_evaluated: Dict[str, bool] = {}
         self.verdict: Optional[ComplianceVerdict] = None
-        self.rules_evaluated: Dict[str, bool] = {} # rule_id -> passed
-        self.mandatory_checks: List[str] = ["BSA", "OFAC", "JURISDICTION"]
-        self.is_completed: bool = False
+        self.completed: bool = False
 
     @classmethod
     async def load(cls, store, application_id: str) -> "ComplianceRecordAggregate":
-        events = await store.load_stream(f"compliance-{application_id}")
         agg = cls(application_id)
+        events = await store.load_stream(agg.stream_id)
         agg.apply_events(events)
         return agg
 
-    # --- Business Rules ---
-    def assert_not_completed(self):
-        if self.is_completed:
-            raise DomainError(f"Compliance record for {self.application_id} is already completed.")
+    def assert_not_completed(self) -> None:
+        if self.completed:
+            raise DomainError("Compliance record already completed")
 
-    def can_issue_verdict(self) -> bool:
-        # Cannot issue clearance without all mandatory checks
-        for check in self.mandatory_checks:
-            if check not in self.rules_evaluated:
-                return False
-        return True
+    def can_clear(self) -> bool:
+        required = {"KYC", "AML", "SANCTIONS"}
+        return required.issubset({k for k, v in self.rules_evaluated.items() if v})
 
-    # --- Event Handlers ---
-    def on_complaincerulepassed(self, event: StoredEvent):
-        rule_id = event.payload.get("rule_id")
-        self.rules_evaluated[rule_id] = True
+    def on_compliancerulepassed(self, event: StoredEvent) -> None:
+        self.rules_evaluated[event.payload["rule_id"]] = True
 
-    def on_complaincerulefailed(self, event: StoredEvent):
-        rule_id = event.payload.get("rule_id")
-        self.rules_evaluated[rule_id] = False
-        # Hard block if needed, but here we just record the fail
-        if event.payload.get("is_hard_block", False):
-            self.verdict = ComplianceVerdict.BLOCKED
+    def on_compliancerulefailed(self, event: StoredEvent) -> None:
+        self.rules_evaluated[event.payload["rule_id"]] = False
 
-    def on_compliancecheckcompleted(self, event: StoredEvent):
-        if not self.can_issue_verdict():
-            # In a strict system, this would raise error. 
-            # But the orchestrator will catch it too.
-            pass
-        self.is_completed = True
-        self.verdict = event.payload.get("verdict")
+    def on_compliancecheckcompleted(self, event: StoredEvent) -> None:
+        self.completed = True
+        self.verdict = ComplianceVerdict(event.payload["verdict"])

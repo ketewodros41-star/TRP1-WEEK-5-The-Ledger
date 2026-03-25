@@ -66,6 +66,21 @@ pytest -q tests
 
 If your environment has broad pytest discovery enabled, pointing directly at `tests` helps avoid collecting non-test files.
 
+## Aiven Kafka SSL Producer
+
+Send test messages to Aiven Kafka using SSL certs:
+
+```bash
+python scripts/aiven_kafka_ssl_producer.py \
+  --bootstrap-server kafka-12a67923-ktewodros41-271c.i.aivencloud.com:26372 \
+  --topic trp \
+  --ca-file ca.pem \
+  --cert-file service.cert \
+  --key-file service.key \
+  --count 100 \
+  --interval-seconds 1
+```
+
 ## Notes
 
 - Event ordering is stream-local (`stream_position`) and global (`global_position` identity).
